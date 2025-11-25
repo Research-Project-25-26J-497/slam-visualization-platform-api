@@ -1,0 +1,13 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment directory (if you create one locally)
+venv/
+
+# Docker/Data
+/data_store/
+.vscode/
+.DS_Store

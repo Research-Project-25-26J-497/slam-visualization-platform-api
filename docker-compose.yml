@@ -1,0 +1,40 @@
+# Backend/docker-compose.yml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine # The database service
+    container_name: slam_postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: user_slam
+      POSTGRES_PASSWORD: password123 
+      POSTGRES_DB: slam_db
+    ports:
+      - "5432:5432" # Exposes DB port to host machine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    networks:
+      - visualization_network # Internal network for service communication
+
+  api:
+    build: 
+      context: . # Builds from the current directory (where Dockerfile is)
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/code # Mounts local code for development
+    ports:
+      - "8000:8000" # Exposes API port to host machine
+    depends_on:
+      - db # Ensures DB starts first
+    networks:
+      - visualization_network
+
+# This network is where both backend and frontend services will communicate
+networks:
+  visualization_network:
+    driver: bridge
+    name: slam_viz_platform_network # Give it a fixed name for the frontend to join
+
+volumes:
+  postgres_data:
