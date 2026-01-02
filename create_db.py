@@ -1,12 +1,11 @@
 from database.db import engine, Base
-# Import models so SQLAlchemy knows what tables to create
-from database.models import Annotation, MapPoint 
+# ✅ FIXED: Only import Annotation (MapPoint is gone!)
+from database.models import Annotation 
 
 def reset_database():
     print("⏳ Connecting to Database...")
     
     # 1. DELETE EVERYTHING (The Clean Slate)
-    # This drops all tables defined in your models
     Base.metadata.drop_all(bind=engine)
     print("🗑️ Old data wiped successfully.")
 
