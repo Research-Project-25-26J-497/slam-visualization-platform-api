@@ -1,8 +1,19 @@
-# Backend/create_db.py
 from database.db import engine, Base
-from database.models import Annotation
+# Import models so SQLAlchemy knows what tables to create
+from database.models import Annotation, MapPoint 
 
-print("🔌 Connecting to Neon Cloud...")
-# Looks at your 'Annotation' model and creates the table in the DB
-Base.metadata.create_all(bind=engine)
-print("✅ SUCCESS: Tables created in Neon!")
+def reset_database():
+    print("⏳ Connecting to Database...")
+    
+    # 1. DELETE EVERYTHING (The Clean Slate)
+    # This drops all tables defined in your models
+    Base.metadata.drop_all(bind=engine)
+    print("🗑️ Old data wiped successfully.")
+
+    # 2. CREATE FRESH TABLES
+    Base.metadata.create_all(bind=engine)
+    print("✅ New tables created.")
+    print("🚀 DATABASE RESET COMPLETE!")
+
+if __name__ == "__main__":
+    reset_database()
