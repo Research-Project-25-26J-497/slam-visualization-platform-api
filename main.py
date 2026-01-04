@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
 import json
-import random # Added for heatmap generation
+import random
 from datetime import datetime
 import os 
 
@@ -30,7 +30,6 @@ hazard_grid = {}
 HAZARD_GRID_SIZE = 2.0
 HAZARD_COOLDOWN = 15.0 
 
-# --- DATA MODELS ---
 class WaypointRequest(BaseModel):
     robot_id: str
     x: float
@@ -39,6 +38,7 @@ class WaypointRequest(BaseModel):
 
 class AnnotationCreate(BaseModel):
     label: str
+    type: str
     x: float
     y: float = 0.0
     z: float
@@ -54,8 +54,8 @@ class RobotTelemetry(BaseModel):
     x: float
     z: float
     angle: float
+    status: Optional[str] = "IDLE"
 
-# --- WEBSOCKET MANAGER ---
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -74,8 +74,6 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# --- ROUTES ---
-
 @app.get("/")
 def read_root(): return {"status": "ONLINE"}
 
@@ -92,29 +90,22 @@ def get_system_status():
         "map_points": len(global_map)
     }
 
-# --- NEW: COLLISION HEATMAP ENDPOINT ---
 @app.get("/api/analytics/collisions")
 def get_collision_heatmap():
-    """Returns fake historical collision points for visualization"""
     data = []
-    # Cluster 1: High collisions near the Puddle (Hazard at x=3, z=-3)
     for _ in range(25):
         data.append({
             "x": 3.0 + random.uniform(-0.8, 0.8),
             "z": -3.0 + random.uniform(-0.8, 0.8),
             "intensity": random.uniform(0.5, 1.0)
         })
-    
-    # Cluster 2: Collisions near the Table (Tight squeeze at x=-5, z=0)
     for _ in range(15):
         data.append({
             "x": -5.0 + random.uniform(-1.0, 1.0),
             "z": 0.0 + random.uniform(-1.0, 1.0),
             "intensity": random.uniform(0.3, 0.8)
         })
-        
     return data
-# ---------------------------------------
 
 @app.post("/api/map/snapshot")
 def save_map_snapshot():
@@ -166,7 +157,14 @@ def get_target(): return current_target
 async def update_robot_pose(data: RobotTelemetry):
     global last_robot_heartbeat
     last_robot_heartbeat = datetime.now()
-    await manager.broadcast({"type": "ROBOT_POSE", "robot_id": data.robot_id, "x": data.x, "z": data.z, "angle": data.angle})
+    await manager.broadcast({
+        "type": "ROBOT_POSE", 
+        "robot_id": data.robot_id, 
+        "x": data.x, 
+        "z": data.z, 
+        "angle": data.angle,
+        "status": data.status 
+    })
     return {"status": "ok"}
 
 @app.post("/api/map/batch")
@@ -181,12 +179,10 @@ async def receive_map_chunk(points: List[MapPointCreate], db: Session = Depends(
 
     map_version += 1
     
-    # 💧 HAZARD DETECTION (Simple & Robust)
     for p in points:
         if p.y < 0.1 and p.confidence < 0.2:
             grid_key = (int(p.x / HAZARD_GRID_SIZE), int(p.z / HAZARD_GRID_SIZE))
             if grid_key not in hazard_grid or (current_time - hazard_grid[grid_key]) > HAZARD_COOLDOWN:
-                print(f"⚠️ HAZARD: Puddle at {p.x:.1f}, {p.z:.1f}")
                 await manager.broadcast({"type": "HAZARD_ALERT", "message": "⚠️ Liquid Hazard Detected!"})
                 hazard_grid[grid_key] = current_time
 
@@ -204,9 +200,20 @@ def read_annotations(db: Session = Depends(get_db)): return db.query(Annotation)
 
 @app.post("/api/annotations")
 def create_annotation(annotation: AnnotationCreate, db: Session = Depends(get_db)):
-    new_ann = Annotation(label=annotation.label, x=annotation.x, y=annotation.y, z=annotation.z)
+    """
+    Fulfills User-Interactive Annotation System objective[cite: 211, 214].
+    Ensures semantic labels (HAZARD/OBJECT) are persisted in the Neon DB.
+    """
+    new_ann = Annotation(
+        label=annotation.label, 
+        type=annotation.type,  # ✅ This MUST be here to save the hazard status
+        x=annotation.x, 
+        y=annotation.y, 
+        z=annotation.z
+    )
     db.add(new_ann)
     db.commit()
+    db.refresh(new_ann) # Refresh to get the ID and confirm the type
     return new_ann
 
 @app.websocket("/ws")
