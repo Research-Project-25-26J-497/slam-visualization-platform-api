@@ -30,6 +30,18 @@ hazard_grid = {}
 HAZARD_GRID_SIZE = 2.0
 HAZARD_COOLDOWN = 15.0 
 
+# ── Multi-robot state ───────────────────────────────────────────────────────────
+robot_poses: dict = {}          # {robot_id: {id, color, x, z, angle, status}}
+position_history: list = []     # [{x, z}] – capped, used for heatmap density
+MAX_POSITION_HISTORY = 5000
+
+ROBOT_COLORS: dict = {
+    "robot1": "orange",
+    "robot2": "#22d3ee",
+    "robot3": "#4ade80",
+    "robot4": "#f472b6",
+}
+
 class WaypointRequest(BaseModel):
     robot_id: str
     x: float
@@ -55,6 +67,7 @@ class RobotTelemetry(BaseModel):
     z: float
     angle: float
     status: Optional[str] = "IDLE"
+    color: Optional[str] = None  # forwarded by ros2_web_bridge; falls back to ROBOT_COLORS
 
 class ConnectionManager:
     def __init__(self):
@@ -92,20 +105,28 @@ def get_system_status():
 
 @app.get("/api/analytics/collisions")
 def get_collision_heatmap():
-    data = []
-    for _ in range(25):
-        data.append({
-            "x": 3.0 + random.uniform(-0.8, 0.8),
-            "z": -3.0 + random.uniform(-0.8, 0.8),
-            "intensity": random.uniform(0.5, 1.0)
-        })
-    for _ in range(15):
-        data.append({
-            "x": -5.0 + random.uniform(-1.0, 1.0),
-            "z": 0.0 + random.uniform(-1.0, 1.0),
-            "intensity": random.uniform(0.3, 0.8)
-        })
-    return data
+    """Returns a density heatmap derived from actual robot position history."""
+    global position_history
+    if not position_history:
+        return []
+
+    CELL_SIZE = 1.0
+    cell_counts: dict = {}
+    for pos in position_history:
+        cx = round(pos["x"] / CELL_SIZE) * CELL_SIZE
+        cz = round(pos["z"] / CELL_SIZE) * CELL_SIZE
+        key = (cx, cz)
+        cell_counts[key] = cell_counts.get(key, 0) + 1
+
+    if not cell_counts:
+        return []
+
+    max_count = max(cell_counts.values())
+    return [
+        {"x": k[0], "z": k[1], "intensity": round(v / max_count, 3)}
+        for k, v in cell_counts.items()
+        if v / max_count > 0.05  # filter near-zero cells
+    ]
 
 @app.post("/api/map/snapshot")
 def save_map_snapshot():
@@ -133,8 +154,12 @@ def load_map_snapshot():
 
 @app.delete("/api/map/clear")
 def clear_map():
-    global global_map, map_version
+    global global_map, map_version, robot_poses, position_history, hazard_grid, last_robot_heartbeat
     global_map.clear()
+    robot_poses.clear()
+    position_history.clear()
+    hazard_grid.clear()
+    last_robot_heartbeat = None
     map_version += 1
     return {"status": "Map cleared"}
 
@@ -155,15 +180,38 @@ def get_target(): return current_target
 
 @app.post("/api/robot/telemetry")
 async def update_robot_pose(data: RobotTelemetry):
-    global last_robot_heartbeat
+    global last_robot_heartbeat, robot_poses, position_history
     last_robot_heartbeat = datetime.now()
+
+    # Resolve color: use explicit value from bridge, or fall back to known palette
+    color = data.color or ROBOT_COLORS.get(data.robot_id, "orange")
+    robot_poses[data.robot_id] = {
+        "id":     data.robot_id,
+        "color":  color,
+        "x":      data.x,
+        "z":      data.z,
+        "angle":  data.angle,
+        "status": data.status,
+    }
+
+    # Track position for real-time heatmap density
+    position_history.append({"x": data.x, "z": data.z})
+    if len(position_history) > MAX_POSITION_HISTORY:
+        position_history.pop(0)
+
+    # Legacy single-robot message (backwards-compatible with simulate_slam.py)
     await manager.broadcast({
-        "type": "ROBOT_POSE", 
-        "robot_id": data.robot_id, 
-        "x": data.x, 
-        "z": data.z, 
-        "angle": data.angle,
-        "status": data.status 
+        "type":     "ROBOT_POSE",
+        "robot_id": data.robot_id,
+        "x":        data.x,
+        "z":        data.z,
+        "angle":    data.angle,
+        "status":   data.status,
+    })
+    # Multi-robot message consumed by MapCanvas.tsx
+    await manager.broadcast({
+        "type":   "MULTI_ROBOT_POSES",
+        "robots": list(robot_poses.values()),
     })
     return {"status": "ok"}
 
