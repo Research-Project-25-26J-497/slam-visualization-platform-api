@@ -10,6 +10,7 @@ import os
 
 from database.db import get_db
 from database.models import Annotation
+from map_manager import MapManager
 
 app = FastAPI(title="M.A.N.T.I.S Gateway API")
 
@@ -21,9 +22,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SNAPSHOT_FILE = "map_snapshot.json"
-global_map = {} 
-map_version = 0 
+# Initialize map manager (handles all map persistence & comparison)
+map_manager = MapManager()
+
+# Global state for non-map features
 current_target = {"x": 0.0, "z": 0.0}
 last_robot_heartbeat: Optional[datetime] = None
 hazard_grid = {} 
@@ -100,7 +102,7 @@ def get_system_status():
         "backend": "ONLINE",
         "simulator_status": "CONNECTED" if is_online else "DISCONNECTED",
         "last_heartbeat": str(last_robot_heartbeat) if last_robot_heartbeat else "Never",
-        "map_points": len(global_map)
+        "map_points": len(map_manager.current_map)
     }
 
 @app.get("/api/analytics/collisions")
@@ -130,38 +132,45 @@ def get_collision_heatmap():
 
 @app.post("/api/map/snapshot")
 def save_map_snapshot():
-    global global_map
-    try:
-        data = list(global_map.values())
-        with open(SNAPSHOT_FILE, "w") as f: json.dump(data, f)
-        return {"status": "Saved", "count": len(data)}
-    except Exception as e: return {"status": "Error", "detail": str(e)}
+    """Save current map to snapshot."""
+    return map_manager.save_snapshot()
 
 @app.post("/api/map/load")
 def load_map_snapshot():
-    global global_map, map_version
-    try:
-        if os.path.exists(SNAPSHOT_FILE):
-            with open(SNAPSHOT_FILE, "r") as f: data = json.load(f)
-            global_map.clear()
-            for p in data:
-                key = f"{round(p['x'], 1)},{round(p['y'], 1)},{round(p['z'], 1)}"
-                global_map[key] = p
-            map_version += 1 
-            return {"status": "Loaded", "count": len(global_map)}
-        return {"status": "No snapshot found"}
-    except Exception as e: return {"status": "Error", "detail": str(e)}
+    """Load map from snapshot."""
+    return map_manager.load_snapshot()
 
 @app.delete("/api/map/clear")
 def clear_map():
-    global global_map, map_version, robot_poses, position_history, hazard_grid, last_robot_heartbeat
-    global_map.clear()
+    """Clear both current and last saved maps."""
+    global robot_poses, position_history, hazard_grid, last_robot_heartbeat
+    map_manager.clear_all()
     robot_poses.clear()
     position_history.clear()
     hazard_grid.clear()
     last_robot_heartbeat = None
-    map_version += 1
     return {"status": "Map cleared"}
+
+@app.post("/api/map/save-as-last")
+def save_map_as_last_saved():
+    """
+    Save the current map as the 'last saved' reference map.
+    This OVERWRITES the previous last saved map when user clicks save from frontend.
+    """
+    return map_manager.save_current_as_last_saved()
+
+@app.get("/api/map/last-saved")
+def get_last_saved_map():
+    """Retrieve the last saved map."""
+    return map_manager.get_last_saved()
+
+@app.get("/api/map/differences")
+def get_map_differences():
+    """
+    Compare current map with last saved map.
+    Returns new points (RED), removed points, and modified points.
+    """
+    return map_manager.get_differences()
 
 @app.post("/api/command/waypoint")
 async def set_waypoint(cmd: WaypointRequest):
@@ -217,16 +226,16 @@ async def update_robot_pose(data: RobotTelemetry):
 
 @app.post("/api/map/batch")
 async def receive_map_chunk(points: List[MapPointCreate], db: Session = Depends(get_db)):
-    global last_robot_heartbeat, map_version, global_map, hazard_grid
+    """Add map points to the current map."""
+    global last_robot_heartbeat, hazard_grid
     last_robot_heartbeat = datetime.now()
     current_time = datetime.now().timestamp()
     
-    for p in points:
-        key = f"{round(p.x, 1)},{round(p.y, 1)},{round(p.z, 1)}"
-        global_map[key] = {"x": p.x, "y": p.y, "z": p.z, "confidence": p.confidence}
+    # Convert points to dict format and add to map
+    points_dict = [{"x": p.x, "y": p.y, "z": p.z, "confidence": p.confidence} for p in points]
+    map_manager.add_points(points_dict)
 
-    map_version += 1
-    
+    # Check for hazards
     for p in points:
         if p.y < 0.1 and p.confidence < 0.2:
             grid_key = (int(p.x / HAZARD_GRID_SIZE), int(p.z / HAZARD_GRID_SIZE))
@@ -239,9 +248,11 @@ async def receive_map_chunk(points: List[MapPointCreate], db: Session = Depends(
 
 @app.get("/api/map")
 def get_map(version: Optional[int] = None):
-    if version is not None and version == map_version:
-        return {"status": "not_modified", "version": map_version}
-    return {"status": "ok", "version": map_version, "points": list(global_map.values())}
+    """Get the current map, with version check for optimization."""
+    is_modified, points = map_manager.get_map_by_version(version)
+    if version is not None and not is_modified:
+        return {"status": "not_modified", "version": map_manager.map_version}
+    return {"status": "ok", "version": map_manager.map_version, "points": points}
 
 @app.get("/api/annotations")
 def read_annotations(db: Session = Depends(get_db)): return db.query(Annotation).all()
