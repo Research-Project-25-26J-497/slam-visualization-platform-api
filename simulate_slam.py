@@ -14,13 +14,10 @@ GRID_SIZE = 0.5
 LIDAR_RANGE = 4
 
 # --- GLOBAL STATE ---
-robot_x = -8.5
-robot_z = 6.0
+robot_x = 0
+robot_z = 0
 robot_angle = 0
-
-# Set the initial target to a different location so it starts moving immediately!
-# Let's tell it to drive out of the room and into the central corridor
-last_target = {"x": -2.0, "z": 0.0} 
+last_target = {"x": 0, "z": 0}
 current_path = [] 
 last_map_upload = datetime.datetime.now()
 
@@ -42,38 +39,6 @@ class DynamicGrid:
 
 robot_map = DynamicGrid()
 
-def check_map_collision(x, z):
-    # 1. Outer Perimeter (Square 20x20m based on visual scale)
-    if abs(x) > 10 or abs(z) > 10: return True
-
-    # 2. The "Cross" Dividers (Corridor Walls)
-    # These walls create the 4-room split but stop before the center hub
-    wall_thickness = 0.2
-    if abs(x) < wall_thickness and abs(z) > 2: return True # Vertical walls
-    if abs(z) < wall_thickness and abs(x) > 2: return True # Horizontal walls
-
-    # 3. Objects by Room (Matching the Screenshot Colors/Shapes)
-    
-    # NW Room (Top-Left): Grey & Blue Boxes
-    if (-8 < x < -6 and 6 < z < 8): return True # Grey Box
-    if (-5 < x < -3 and 5 < z < 7): return True # Blue Box
-
-    # NE Room (Top-Right): Green & Red Cylinders
-    if math.sqrt((x - 3)**2 + (z - 7)**2) < 0.7: return True # Green Cylinder
-    if math.sqrt((x - 6)**2 + (z - 7)**2) < 0.8: return True # Red Cylinder
-
-    # SW Room (Bottom-Left): Two Brown Boxes
-    if (-7 < x < -5 and -7 < z < -5): return True 
-    if (-4 < x < -2 and -8 < z < -6): return True
-
-    # SE Room (Bottom-Right): Two Brown Racks
-    if (4 < x < 8 and -4 < z < -3): return True # Top Rack
-    if (5 < x < 9 and -7 < z < -6): return True # Bottom Rack
-
-    # Center Hub: Yellow Box
-    if abs(x) < 0.6 and abs(z) < 0.6: return True
-
-    return False
 
 def astar(start, goal):
     start_node = (round(start[0]/GRID_SIZE), round(start[1]/GRID_SIZE))
@@ -118,35 +83,87 @@ def scan_environment_truth(rx, rz):
             if check_map_collision(tx, tz):
                 detected.append((tx, tz))
                 break 
+    # Hazard Sensor
+    if math.sqrt((rx - 3.0)**2 + (rz - (-3.0))**2) < LIDAR_RANGE:
+        for theta in range(0, 360, 20):
+            rad = math.radians(theta)
+            px = 3.0 + 1.2 * math.cos(rad)
+            pz = -3.0 + 1.2 * math.sin(rad)
+            detected.append((px, pz))
     return detected
 
 def generate_lidar_cloud(rx, rz):
     points = []
-    for angle in range(0, 360, 2): # Higher density for the new objects
+    # Walls (room boundaries)
+    for angle in range(0, 360, 2):
         rad = math.radians(angle)
         for dist in range(1, int(LIDAR_RANGE * 10)):
             d = dist / 10.0
             tx = rx + d * math.cos(rad)
             tz = rz + d * math.sin(rad)
-            
             if check_map_collision(tx, tz):
-                # Height logic based on visual object sizes
-                h = 2.0 # Walls
-                if abs(tx) < 0.6 and abs(tz) < 0.6: h = 0.8 # Yellow box is shorter
-                elif (3 < tx < 9 and -8 < tz < -3): h = 0.6 # Racks are low
-                elif math.sqrt((tx-3)**2+(tz-7)**2) < 1: h = 1.2 # Cylinders
+                h = 2.0  # Default wall height
+                
+                # Box 1 (small cube) - moved left
+                if -2 < tx < -1 and -1 < tz < 0: 
+                    h = 0.8
+                # Box 2 (small cube) - moved left  
+                elif -7 < tx < -6 and 2 < tz < 3:
+                    h = 0.8
+                # Box 3 (small cube) - moved left
+                elif 0 < tx < 1 and -3 < tz < -2:
+                    h = 0.8
+                # Table (larger surface with legs) - moved left
+                elif -8 < tx < -5 and -2 < tz < 1:
+                    h = 0.7
                 
                 points.append({
-                    "x": tx + random.uniform(-0.01, 0.01), 
+                    "x": tx + random.uniform(-0.05, 0.05), 
                     "y": random.uniform(0.1, h), 
-                    "z": tz + random.uniform(-0.01, 0.01), 
-                    "confidence": 0.98
+                    "z": tz + random.uniform(-0.05, 0.05), 
+                    "confidence": 0.9
                 })
                 break
     return points
 
+def check_map_collision(x, z):
+    # Room boundaries (single room 20x12 units)
+    if x > 10 or x < -10 or z > 6 or z < -6: 
+        return True
+    
+    # Box 1 (at position: -1.5, -0.5) - moved left
+    if -2 < x < -1 and -1 < z < 0:
+        return True
+    
+    # Box 2 (at position: -6.5, 2.5) - moved left
+    if -7 < x < -6 and 2 < z < 3:
+        return True
+    
+    # Box 3 (at position: 0.5, -2.5) - moved left
+    if 0 < x < 1 and -3 < z < -2:
+        return True
+    
+    # Table (at position: -6.5, -0.5) - moved left
+    # Table top
+    if -8 < x < -5 and -2 < z < 1:
+        return True
+    # Table legs (optional - for more realistic collision)
+    # Leg 1
+    if -7.8 < x < -7.4 and -1.8 < z < -1.4:
+        return True
+    # Leg 2
+    if -5.2 < x < -4.8 and -1.8 < z < -1.4:
+        return True
+    # Leg 3
+    if -7.8 < x < -7.4 and 0.4 < z < 0.8:
+        return True
+    # Leg 4
+    if -5.2 < x < -4.8 and 0.4 < z < 0.8:
+        return True
+    
+    return False
 # --- MAIN LOOP ---
-print("🤖 ROBOT ONLINE | MODE: Standard Mapping (Multi-Room Warehouse)")
+print("🤖 ROBOT ONLINE | MODE: Standard Mapping")
 
 loop_count = 0
 while True:
@@ -192,6 +209,7 @@ while True:
             robot_z += 0.2 * math.sin(-angle)
             robot_angle = angle
             try: 
+                # ✅ ADDED 'status' TO TELEMETRY DATA
                 requests.post(f"{API_URL}/api/robot/telemetry", 
                     json={
                         "robot_id": ROBOT_ID, 
