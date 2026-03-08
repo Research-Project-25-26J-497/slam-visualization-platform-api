@@ -275,6 +275,24 @@ def create_annotation(annotation: AnnotationCreate, db: Session = Depends(get_db
     db.refresh(new_ann) # Refresh to get the ID and confirm the type
     return new_ann
 
+@app.delete("/api/annotations/{annotation_id}")
+def delete_annotation(annotation_id: int, db: Session = Depends(get_db)):
+    """Remove a single annotation by ID."""
+    annotation = db.query(Annotation).filter(Annotation.id == annotation_id).first()
+    if not annotation:
+        return {"status": "error", "message": "Annotation not found"}
+    db.delete(annotation)
+    db.commit()
+    return {"status": "success", "message": f"Annotation {annotation_id} deleted"}
+
+@app.delete("/api/annotations")
+def delete_all_annotations(db: Session = Depends(get_db)):
+    """Remove all annotations."""
+    count = db.query(Annotation).count()
+    db.query(Annotation).delete()
+    db.commit()
+    return {"status": "success", "message": f"Deleted {count} annotations"}
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
