@@ -14,6 +14,10 @@ from map_manager import MapManager
 
 app = FastAPI(title="M.A.N.T.I.S Gateway API")
 
+origins = [
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
