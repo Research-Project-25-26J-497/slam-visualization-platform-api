@@ -1,3 +1,9 @@
+"""SQLAlchemy database connection and session management.
+
+This module reads the database URL from the environment and exposes the engine,
+base metadata, and a session generator for dependency injection.
+"""
+
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
@@ -18,6 +24,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 def get_db():
+    """Provide a database session for FastAPI dependency injection."""
     db = SessionLocal()
     try:
         yield db

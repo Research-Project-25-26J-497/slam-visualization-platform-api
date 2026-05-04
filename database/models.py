@@ -1,3 +1,8 @@
+"""ORM models for the SLAM visualization platform.
+
+Defines the persistent database schema for semantic annotations.
+"""
+
 from sqlalchemy import Column, Integer, String, Float, DateTime
 from sqlalchemy.sql import func
 from .db import Base

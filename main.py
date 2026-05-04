@@ -12,6 +12,12 @@ from database.db import get_db
 from database.models import Annotation
 from map_manager import MapManager
 
+"""Gateway API server for the M.A.N.T.I.S. visualization platform.
+
+This module exposes FastAPI endpoints for map synchronization, telemetry ingestion,
+robot commands, and analytics. It also manages websocket broadcasts for live updates.
+"""
+
 app = FastAPI(title="M.A.N.T.I.S Gateway API")
 
 origins = [
@@ -76,15 +82,27 @@ class RobotTelemetry(BaseModel):
     color: Optional[str] = None  # forwarded by ros2_web_bridge; falls back to ROBOT_COLORS
 
 class ConnectionManager:
+    """Manages active websocket connections and broadcasts messages to clients."""
+
     def __init__(self):
+        """Initialize the connection manager with an empty connection list."""
         self.active_connections: List[WebSocket] = []
+
     async def connect(self, websocket: WebSocket):
+        """Accept a new websocket connection and add it to the active list."""
         await websocket.accept()
         self.active_connections.append(websocket)
+
     def disconnect(self, websocket: WebSocket):
+        """Remove a websocket connection from the active list."""
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+
     async def broadcast(self, message: dict):
+        """Send a JSON message to all active websocket clients.
+
+        Removes any connections that fail during send.
+        """
         disconnected = []
         for connection in self.active_connections:
             try: await connection.send_text(json.dumps(message))
@@ -94,10 +112,13 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 @app.get("/")
-def read_root(): return {"status": "ONLINE"}
+def read_root():
+    """Return a basic service health check response."""
+    return {"status": "ONLINE"}
 
 @app.get("/api/system/status")
 def get_system_status():
+    """Report backend status including simulator connectivity and map point count."""
     global last_robot_heartbeat
     is_online = False
     if last_robot_heartbeat and (datetime.now() - last_robot_heartbeat).total_seconds() < 5:
@@ -178,6 +199,7 @@ def get_map_differences():
 
 @app.post("/api/command/waypoint")
 async def set_waypoint(cmd: WaypointRequest):
+    """Accept a waypoint command and broadcast it to connected robots."""
     global current_target
     current_target = {"x": cmd.x, "z": cmd.z}
     await manager.broadcast({"type": "COMMAND_WAYPOINT", "robot_id": cmd.robot_id, "target": current_target})
@@ -185,14 +207,18 @@ async def set_waypoint(cmd: WaypointRequest):
 
 @app.post("/api/command/emergency_stop")
 async def emergency_stop():
+    """Broadcast an emergency stop command to all connected robots."""
     await manager.broadcast({"type": "EMERGENCY_STOP"})
     return {"status": "HALTED"}
 
 @app.get("/api/robot/target")
-def get_target(): return current_target
+def get_target():
+    """Return the latest navigation target for the active robot."""
+    return current_target
 
 @app.post("/api/robot/telemetry")
 async def update_robot_pose(data: RobotTelemetry):
+    """Process incoming robot telemetry, update internal state, and broadcast robot pose."""
     global last_robot_heartbeat, robot_poses, position_history
     last_robot_heartbeat = datetime.now()
 

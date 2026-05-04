@@ -1,3 +1,9 @@
+"""Robot simulation client for the slam visualization platform.
+
+This script emulates a simple robot that scans the environment, uploads lidar points,
+and posts telemetry to the FastAPI backend.
+"""
+
 import time
 import math
 import random
@@ -23,24 +29,35 @@ last_map_upload = datetime.datetime.now()
 
 # --- PHYSICS & MAP ---
 class DynamicGrid:
+    """In-memory occupancy grid used to represent scanned obstacles."""
+
     def __init__(self):
+        """Initialize an empty grid of obstacle cells."""
         self.obstacles = set()
+
     def mark_obstacle(self, x, z):
+        """Mark a point and its surrounding neighbor cells as occupied."""
         self.obstacles.add((round(x/GRID_SIZE), round(z/GRID_SIZE)))
         for dx in [-1, 0, 1]:
             for dz in [-1, 0, 1]:
-                 self.obstacles.add((round(x/GRID_SIZE)+dx, round(z/GRID_SIZE)+dz))
+                self.obstacles.add((round(x/GRID_SIZE)+dx, round(z/GRID_SIZE)+dz))
+
     def is_blocked(self, x, z):
+        """Return True if the given coordinate is blocked by a known obstacle."""
         return (round(x/GRID_SIZE), round(z/GRID_SIZE)) in self.obstacles
+
     def is_path_blocked(self, path):
+        """Check whether any waypoint along a path intersects a blocked cell."""
         for (px, pz) in path:
-            if self.is_blocked(px, pz): return True
+            if self.is_blocked(px, pz):
+                return True
         return False
 
 robot_map = DynamicGrid()
 
 
 def astar(start, goal):
+    """Compute a low-resolution path from start to goal using the A* algorithm."""
     start_node = (round(start[0]/GRID_SIZE), round(start[1]/GRID_SIZE))
     goal_node = (round(goal[0]/GRID_SIZE), round(goal[1]/GRID_SIZE))
     if start_node == goal_node: return []
@@ -73,6 +90,7 @@ def astar(start, goal):
     return path
 
 def scan_environment_truth(rx, rz):
+    """Perform a simulated 360-degree scan and return the first detected obstacles."""
     detected = []
     for angle in range(0, 360, 5): 
         rad = math.radians(angle)
@@ -93,6 +111,7 @@ def scan_environment_truth(rx, rz):
     return detected
 
 def generate_lidar_cloud(rx, rz):
+    """Generate a synthetic lidar point cloud for the robot's current pose."""
     points = []
     # Walls (room boundaries)
     for angle in range(0, 360, 2):
@@ -127,6 +146,7 @@ def generate_lidar_cloud(rx, rz):
     return points
 
 def check_map_collision(x, z):
+    """Check whether a point collides with any static scene geometry."""
     # Room boundaries (single room 20x12 units)
     if x > 10 or x < -10 or z > 6 or z < -6: 
         return True
@@ -209,7 +229,7 @@ while True:
             robot_z += 0.2 * math.sin(-angle)
             robot_angle = angle
             try: 
-                # ✅ ADDED 'status' TO TELEMETRY DATA
+                #  ADDED 'status' TO TELEMETRY DATA
                 requests.post(f"{API_URL}/api/robot/telemetry", 
                     json={
                         "robot_id": ROBOT_ID, 

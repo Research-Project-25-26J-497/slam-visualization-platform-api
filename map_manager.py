@@ -16,6 +16,7 @@ class MapManager:
     """Manages map operations including saving, loading, and comparison."""
     
     def __init__(self):
+        """Initialize map manager state and load the most recently saved reference map."""
         self.current_map: Dict = {}  # Current generated map
         self.last_saved_map: Dict = {}  # Last saved reference map
         self.map_version: int = 0

@@ -1,8 +1,15 @@
+"""Database initialization script.
+
+Creates or resets the SQLAlchemy schema for this project.
+Use this script to drop existing tables and recreate the schema from models.
+"""
+
 from database.db import engine, Base
 # ✅ FIXED: Only import Annotation (MapPoint is gone!)
 from database.models import Annotation 
 
 def reset_database():
+    """Reset the database schema by dropping and recreating all tables."""
     print("⏳ Connecting to Database...")
     
     # 1. DELETE EVERYTHING (The Clean Slate)
